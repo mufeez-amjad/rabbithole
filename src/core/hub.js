@@ -231,7 +231,7 @@ function composerHtml() {
 
 function agentStatusHtml() {
   return `<div class="agent-status" id="agent-status" data-state="unknown">
-    <div class="agent-row"><span class="dot"></span><span id="agent-label">Checking for an agent…</span></div>
+    <div class="agent-row"><span class="dot"></span><span id="agent-label">Checking for an MCP client…</span></div>
     <div class="agent-connect" id="agent-connect" hidden>
       Connect Rabbithole to your MCP client, then it'll show up here:
       <div class="notice-cmd">
@@ -336,7 +336,7 @@ const HOME_SCRIPT = `
   var connectEl = document.getElementById("agent-connect");
   function setAgent(connected){
     statusEl.dataset.state = connected ? "on" : "off";
-    labelEl.textContent = connected ? "Agent connected" : "No agent connected";
+    labelEl.textContent = connected ? "MCP client connected · ready for a new hole" : "No MCP client connected";
     connectEl.hidden = connected;
   }
   function refreshAgent(){
