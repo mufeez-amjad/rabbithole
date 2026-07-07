@@ -215,14 +215,7 @@ function composerHtml() {
   return `<form class="composer" id="composer" autocomplete="off">
     <textarea id="prompt" rows="1" placeholder="Start a new rabbit hole — paste a document or a topic…"></textarea>
     <div class="composer-row">
-      <div class="composer-left">
-        <span class="cbtn" aria-hidden="true">+</span>
-        <span class="cpill" aria-hidden="true">${slidersSvg()} Tools</span>
-      </div>
-      <div class="composer-right">
-        <span class="cbtn" aria-hidden="true">${micSvg()}</span>
-        <button type="submit" class="send" id="send" aria-label="Start">${sendSvg()}</button>
-      </div>
+      <button type="submit" class="send" id="send" aria-label="Start">${sendSvg()}</button>
     </div>
     <div class="handoff" id="handoff" hidden>
       <div class="handoff-title">Start this in a fresh agent</div>
@@ -276,12 +269,6 @@ function relativeTime(iso) {
 
 // ---- inline icons ----------------------------------------------------------
 
-function slidersSvg() {
-  return `<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 5h7M12 5h2M2 11h2M7 11h7"/><circle cx="10.5" cy="5" r="1.6"/><circle cx="5.5" cy="11" r="1.6"/></svg>`;
-}
-function micSvg() {
-  return `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="4" height="7" rx="2"/><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2"/></svg>`;
-}
 function sendSvg() {
   return `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 12.5V4M8 4 4.2 7.8M8 4l3.8 3.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
 }
@@ -382,12 +369,7 @@ const PAGE_CSS = `
   .composer textarea { display:block; width:100%; border:0; outline:0; resize:none; background:transparent;
     color:var(--fg); font:inherit; line-height:1.5; max-height:320px; padding:2px 4px 8px; }
   .composer textarea::placeholder { color:var(--muted); }
-  .composer-row { display:flex; align-items:center; justify-content:space-between; }
-  .composer-left, .composer-right { display:flex; align-items:center; gap:8px; }
-  .cbtn { display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:50%;
-    color:var(--fg); font-size:20px; line-height:1; }
-  .cpill { display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 12px; border-radius:16px;
-    border:1px solid var(--field-border); color:var(--fg); font-size:14px; }
+  .composer-row { display:flex; align-items:center; justify-content:flex-end; }
   .send { display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; border:0;
     border-radius:50%; background:var(--accent); color:var(--bg); cursor:pointer; }
   .send:disabled { opacity:.4; cursor:default; }
