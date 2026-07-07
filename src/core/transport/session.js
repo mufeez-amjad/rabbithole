@@ -31,7 +31,7 @@ const ANSWER_WATCHDOG_MS = 4 * 60 * 1000;
  * drives the canvas and posts branch requests / node updates.
  */
 export class RabbitHoleSession {
-  constructor({ holeId, title, rootId, createdAt, nodes, viewState, isResume, renderPage, onClose }) {
+  constructor({ holeId, title, rootId, createdAt, nodes, viewState, isResume, renderPage, onClose, attached = true, autoOpen = true, standalone = false }) {
     this.id = randomUUID();
     this.holeId = holeId || randomUUID();
     this.title = title || "Untitled";
@@ -40,6 +40,12 @@ export class RabbitHoleSession {
     this.viewState = viewState ?? null;
     this.renderPage = renderPage;
     this.onClose = onClose;
+    // A standalone session (opened from the hub with no agent behind it) starts
+    // detached and never opens its own browser tab — the hub redirects the
+    // browser here. Asks still work: they persist as saved asks and are answered
+    // the next time an agent resumes the hole.
+    this.autoOpen = autoOpen !== false;
+    this.standalone = !!standalone;
 
     /** @type {Map<string, object>} */
     this.nodes = new Map();
@@ -59,7 +65,7 @@ export class RabbitHoleSession {
 
     this.queue = []; // agent-facing events awaiting consumption
     this.waiters = []; // FIFO of {resolve, cleanup} for blocked waitForEvent() calls
-    this.agentAttached = true; // false once the agent cancels/stalls; browser is told
+    this.agentAttached = attached !== false; // false once the agent cancels/stalls (or from the start for a standalone open); browser is told
     this.watchdogTimer = null;
 
     this.sseClients = new Set();
@@ -112,7 +118,7 @@ export class RabbitHoleSession {
     // Persist right away so the hole is resumable even if the process dies
     // before the first answer (durable asks depend on the file existing).
     this.scheduleSave();
-    openBrowser(this.url);
+    if (this.autoOpen) openBrowser(this.url);
     return this.url;
   }
 
@@ -334,6 +340,9 @@ export class RabbitHoleSession {
       // serving this page and the EventSource connecting gets replayed.
       last_event_id: this.lastOutboundEventId,
       agent_attached: this.agentAttached,
+      // Tells the page it was opened standalone (no agent) so it frames the
+      // "keep asking, answered later" state as normal instead of as a fault.
+      standalone: this.standalone,
       view_state: this.viewState,
       nodes: this.serializeNodes(),
     };

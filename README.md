@@ -94,6 +94,22 @@ cached. If the browser must not auto-open (headless), set
 
 The loop: `open_rabbithole` → `branch_request` → `answer_branch` → `branch_request` → … → `session_closed`.
 
+## Open it without an agent
+
+You don't need an MCP client to reread what you've already explored. Run the
+standalone launcher:
+
+```bash
+npx -y github:shlokkhemani/rabbithole rabbithole
+# or, from a clone: node bin/rabbithole.js
+```
+
+It starts a small standing local server and opens a home page listing every
+saved hole — click one to keep reading. There's no agent behind it, so answers
+don't stream in live, but you can still ask: each question is saved and answered
+the next time you open that hole with an agent (`open_rabbithole { hole_id }`).
+The server stays up until you stop it with Ctrl+C.
+
 ## What's inside
 
 - **Reader mode (default):** fullscreen reading, branches sidebar, breadcrumbs;
@@ -122,10 +138,12 @@ The loop: `open_rabbithole` → `branch_request` → `answer_branch` → `branch
 |---------|--------|
 | `RABBITHOLE_DIR` | Override the storage directory (default `~/.rabbithole/`). |
 | `RABBITHOLE_NO_BROWSER=1` | Don't auto-open the browser (headless/testing). |
+| `RABBITHOLE_HUB_PORT` | Port for the standalone launcher's home server (default `4173`; falls back to a random port if taken). |
 
 ## Repo layout
 
 - `bin/mcp-server.js` — entry point (stdio MCP server)
+- `bin/rabbithole.js` — standalone launcher (hub server, no MCP client)
 - `src/` — server, canvas UI (self-contained HTML), storage
 - `website/` — [rabbithole.ing](https://rabbithole.ing), a Next.js single-page site
 

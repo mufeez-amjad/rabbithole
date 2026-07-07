@@ -216,7 +216,9 @@ export const CLIENT_TRANSPORT_STATUS = `  // ===================================
     } else if (connLost){
       setBanner("connlost", true, "Connection lost", "Can't reach the agent session — it may have exited. Your Rabbithole is saved; reopen it from your terminal to continue.");
     } else if (!agentAttached){
-      if (agentReason === "stalled")
+      if (standalone && !agentReason)
+        setBanner("standalone", false, "Reading on your own", "No agent is attached. Keep exploring — anything you ask is saved and answered the next time you open this hole with an agent.");
+      else if (agentReason === "stalled")
         setBanner("stalled", true, "The agent went quiet", "No response for a while — it may have stopped. You can keep asking: questions are saved and answered when the agent returns.");
       else
         setBanner("cancelled", true, "The agent stopped listening", "The tool call was cancelled. You can keep asking — questions are saved and answered when the agent picks this hole back up.");

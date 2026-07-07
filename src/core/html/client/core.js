@@ -21,6 +21,10 @@ export const CLIENT_CORE = `
   var closedReason = frozen ? "frozen" : null;
   var agentAttached = hydration.agent_attached !== false;
   var agentReason = null;
+  // Opened from the hub with no agent behind it: asking still works (saved and
+  // answered on the next agent resume), so the detached state is framed as
+  // normal rather than as a dropped agent.
+  var standalone = !!hydration.standalone;
   var connLost = false;
   var sseFails = 0;
   var pendingAsk = null;

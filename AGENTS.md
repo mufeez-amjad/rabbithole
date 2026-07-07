@@ -11,8 +11,12 @@ An MCP server (stdio) that opens a branching-document canvas in the browser.
 Plain ES modules, no build step, no TypeScript, no test framework yet.
 
 - `bin/mcp-server.js` — entry; just imports `src/mcp/server.js`
+- `bin/rabbithole.js` — standalone launcher; starts the hub (no MCP client) and,
+  unlike the MCP server, may print to stdout
 - `src/mcp/` — MCP wiring (server name `rabbithole`, tools from `src/tools/manifest.js`)
 - `src/core/` — sessions, storage, local HTTP + SSE transport, markdown
+- `src/core/hub.js` — the standing home server behind `bin/rabbithole.js`: lists
+  saved holes and 302-redirects into a detached, standalone canvas session
 - `src/core/html/` — the entire canvas UI, served as ONE self-contained HTML
   document (see `src/core/html/README.md`). Client code is authored as JS
   strings/template literals — mind your escaping, especially backslashes
@@ -24,6 +28,7 @@ Plain ES modules, no build step, no TypeScript, no test framework yet.
 ```bash
 npm install
 RABBITHOLE_NO_BROWSER=1 node bin/mcp-server.js   # speaks MCP on stdio
+node bin/rabbithole.js                            # standalone: hub + browser, no MCP client
 ```
 
 Storage is JSON files under `~/.rabbithole/` (`RABBITHOLE_DIR` overrides).

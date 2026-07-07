@@ -20,7 +20,8 @@
     "agent"
   ],
   "bin": {
-    "rabbithole-mcp": "./bin/mcp-server.js"
+    "rabbithole-mcp": "./bin/mcp-server.js",
+    "rabbithole": "./bin/rabbithole.js"
   },
   "files": [
     "bin",
