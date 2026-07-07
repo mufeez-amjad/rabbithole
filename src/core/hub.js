@@ -188,6 +188,7 @@ function buildHomeHtml(recent, total) {
     `<div class="hero">
       <h1 class="agenda">What do you want to explore?</h1>
       ${composerHtml()}
+      ${agentStatusHtml()}
       <section class="recent">
         <div class="recent-head"><span>Recent holes</span>${viewAll}</div>
         ${grid}
@@ -224,15 +225,21 @@ function composerHtml() {
         <code id="handoff-cmd"></code>
         <button type="button" class="copy" id="copy-cmd">Copy</button>
       </div>
-      <div class="noagent" id="noagent" hidden>
-        No agent detected yet. If you don't have one running, connect Rabbithole to your MCP client first:
-        <div class="notice-cmd">
-          <code id="setup-cmd">claude mcp add rabbithole -- npx -y github:shlokkhemani/rabbithole</code>
-          <button type="button" class="copy" id="copy-setup">Copy</button>
-        </div>
-      </div>
     </div>
   </form>`;
+}
+
+function agentStatusHtml() {
+  return `<div class="agent-status" id="agent-status" data-state="unknown">
+    <div class="agent-row"><span class="dot"></span><span id="agent-label">Checking for an agent…</span></div>
+    <div class="agent-connect" id="agent-connect" hidden>
+      Connect Rabbithole to your MCP client, then it'll show up here:
+      <div class="notice-cmd">
+        <code id="setup-cmd">claude mcp add rabbithole -- npx -y github:shlokkhemani/rabbithole</code>
+        <button type="button" class="copy" id="copy-setup">Copy</button>
+      </div>
+    </div>
+  </div>`;
 }
 
 function holeCardHtml(hole) {
@@ -281,7 +288,6 @@ const HOME_SCRIPT = `
   var send = document.getElementById("send");
   var handoff = document.getElementById("handoff");
   var handoffCmd = document.getElementById("handoff-cmd");
-  var noagent = document.getElementById("noagent");
 
   function grow(){ prompt.style.height = "auto"; prompt.style.height = Math.min(prompt.scrollHeight, 320) + "px"; }
   prompt.addEventListener("input", function(){ grow(); handoff.hidden = true; });
@@ -316,13 +322,31 @@ const HOME_SCRIPT = `
         send.disabled = false;
         if (res && res.ok && res.command){
           handoffCmd.textContent = res.command;
-          noagent.hidden = !!res.agent_connected;
           handoff.hidden = false;
         }
       })
       .catch(function(){ send.disabled = false; });
   }
   form.addEventListener("submit", function(e){ e.preventDefault(); submit(); });
+
+  // Live agent-connection indicator: poll the hub's presence signal so starting
+  // (or stopping) an agent reflects here within a few seconds.
+  var statusEl = document.getElementById("agent-status");
+  var labelEl = document.getElementById("agent-label");
+  var connectEl = document.getElementById("agent-connect");
+  function setAgent(connected){
+    statusEl.dataset.state = connected ? "on" : "off";
+    labelEl.textContent = connected ? "Agent connected" : "No agent connected";
+    connectEl.hidden = connected;
+  }
+  function refreshAgent(){
+    fetch("/health", { cache:"no-store" })
+      .then(function(r){ return r.json(); })
+      .then(function(h){ setAgent(!!(h && h.agent_connected)); })
+      .catch(function(){ setAgent(false); });
+  }
+  refreshAgent();
+  setInterval(refreshAgent, 4000);
   prompt.focus();
 `;
 
@@ -361,8 +385,8 @@ const PAGE_CSS = `
   .wrap { min-height:100%; max-width:760px; margin:0 auto; padding:0 20px 64px; }
 
   /* home hero (ChatGPT-style) */
-  .hero { min-height:100vh; display:flex; flex-direction:column; justify-content:center; gap:22px; padding:64px 0; }
-  .agenda { text-align:center; font-size:30px; font-weight:600; letter-spacing:-.02em; margin:0 0 4px; }
+  .hero { min-height:100vh; display:flex; flex-direction:column; justify-content:center; gap:0; padding:64px 0; }
+  .agenda { text-align:center; font-size:30px; font-weight:600; letter-spacing:-.02em; margin:0 0 22px; }
 
   .composer { background:var(--field); border:1px solid var(--field-border); border-radius:26px;
     padding:14px 16px 10px; box-shadow:0 2px 10px var(--shadow); }
@@ -380,13 +404,21 @@ const PAGE_CSS = `
   .notice-cmd { display:flex; align-items:center; gap:8px; margin:10px 0; }
   .notice-cmd code { flex:1; overflow-x:auto; white-space:nowrap; background:var(--bg); border:1px solid var(--border);
     border-radius:8px; padding:8px 10px; font-size:12.5px; }
-  .handoff .copy { border:1px solid var(--field-border); background:var(--card); color:var(--fg);
+  .copy { border:1px solid var(--field-border); background:var(--card); color:var(--fg);
     border-radius:8px; padding:7px 12px; font-size:13px; cursor:pointer; flex-shrink:0; }
-  .handoff .copy:hover { background:var(--card-hover); }
-  .noagent { margin-top:10px; padding-top:10px; border-top:1px dashed var(--border); color:var(--muted); font-size:12.5px; }
+  .copy:hover { background:var(--card-hover); }
+
+  /* live agent-connection indicator below the composer */
+  .agent-status { margin:10px 4px 0; }
+  .agent-row { display:flex; align-items:center; gap:8px; font-size:13px; color:var(--muted); }
+  .agent-status .dot { width:8px; height:8px; border-radius:50%; background:var(--muted); flex-shrink:0; }
+  .agent-status[data-state="on"] .agent-row { color:var(--fg); }
+  .agent-status[data-state="on"] .dot { background:#19c37d; box-shadow:0 0 0 3px rgba(25,195,125,.18); }
+  .agent-status[data-state="off"] .dot { background:#c4823a; }
+  .agent-connect { margin-top:10px; color:var(--muted); font-size:12.5px; }
 
   /* recent + grid */
-  .recent { margin-top:6px; }
+  .recent { margin-top:32px; }
   .recent-head { display:flex; align-items:baseline; justify-content:space-between; margin:0 4px 12px;
     font-size:13px; font-weight:600; color:var(--muted); letter-spacing:.02em; text-transform:uppercase; }
   .viewall { color:var(--fg); text-decoration:none; font-weight:500; text-transform:none; letter-spacing:0; }

@@ -11,6 +11,7 @@ export const CANVAS_SHELL = `
     <button class="tool-btn" id="r-textdown" title="Smaller text">A−</button>
     <button class="tool-btn" id="r-textup" title="Larger text">A+</button>
     <button class="tool-btn" id="r-canvas" title="Open the spatial canvas">⤢ Canvas</button>
+    <button class="tool-btn tool-icon" id="r-connect" title="Copy command to connect an agent" aria-label="Copy command to connect an agent"><svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5.5" y="5.5" width="8" height="8" rx="1.5"/><path d="M3.5 10.5H3A1.5 1.5 0 0 1 1.5 9V3A1.5 1.5 0 0 1 3 1.5h6A1.5 1.5 0 0 1 10.5 3v.5"/></svg></button>
     <button class="tool-btn" id="r-share" title="Share, export, synthesize">↗ Share</button>
     <button class="tool-btn" id="r-theme" title="Toggle theme">◑</button>
     <button class="tool-btn" id="r-done" title="End the session (the hole stays saved)">Done</button>
@@ -85,6 +86,6 @@ export const CANVAS_SHELL = `
   <div class="cf-row"><button id="cf-keep">Keep</button><button class="cf-remove" id="cf-remove">Remove</button></div>
 </div>
 
-<div id="banner"><div class="banner-body"><span class="banner-title" id="banner-title"></span><span id="banner-msg"></span><button class="banner-action" id="banner-action" hidden>Copy command to connect an agent</button></div><button id="banner-x" title="Dismiss">×</button></div>
+<div id="banner"><div class="banner-body"><span class="banner-title" id="banner-title"></span><span id="banner-msg"></span></div><button id="banner-x" title="Dismiss">×</button></div>
 <div id="hint"></div>
 `;
