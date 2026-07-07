@@ -104,11 +104,15 @@ npx -y github:shlokkhemani/rabbithole rabbithole
 # or, from a clone: node bin/rabbithole.js
 ```
 
-It starts a small standing local server and opens a home page listing every
-saved hole — click one to keep reading. There's no agent behind it, so answers
-don't stream in live, but you can still ask: each question is saved and answered
-the next time you open that hole with an agent (`open_rabbithole { hole_id }`).
-The server stays up until you stop it with Ctrl+C.
+It starts a small standing local server and opens a home page (ChatGPT-style:
+a prompt on top, your most recent holes below, "View all" for the rest). Click a
+hole to keep reading. There's no agent behind it, so answers don't stream in
+live, but you can still ask: each question is saved and answered the next time
+you open that hole with an agent — the reading page has a **Copy command to
+connect an agent** button that hands your MCP client the exact `open_rabbithole
+{ hole_id }` instruction. Starting a *new* hole from the prompt requires a
+running agent (the launcher detects your MCP server via a presence marker). The
+server stays up until you stop it with Ctrl+C.
 
 ## What's inside
 

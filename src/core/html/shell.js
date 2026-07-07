@@ -85,6 +85,6 @@ export const CANVAS_SHELL = `
   <div class="cf-row"><button id="cf-keep">Keep</button><button class="cf-remove" id="cf-remove">Remove</button></div>
 </div>
 
-<div id="banner"><div class="banner-body"><span class="banner-title" id="banner-title"></span><span id="banner-msg"></span></div><button id="banner-x" title="Dismiss">×</button></div>
+<div id="banner"><div class="banner-body"><span class="banner-title" id="banner-title"></span><span id="banner-msg"></span><button class="banner-action" id="banner-action" hidden>Copy command to connect an agent</button></div><button id="banner-x" title="Dismiss">×</button></div>
 <div id="hint"></div>
 `;

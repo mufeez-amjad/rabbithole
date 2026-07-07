@@ -4,6 +4,7 @@ import { log, error as logError } from "../core/logger.js";
 import { buildMcpInputSchema } from "./schema.js";
 import { toolDefinitions } from "../tools/manifest.js";
 import { closeAllSessions } from "../core/sessions.js";
+import { registerAgent, unregisterAgent } from "../core/presence.js";
 
 const server = new McpServer(
   { name: "rabbithole", version: "0.1.0" },
@@ -61,6 +62,10 @@ for (const tool of toolDefinitions) {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
+  // Advertise this agent to the standalone hub so it can tell whether a new hole
+  // can be started. Removed on shutdown, and on 'exit' as a crash-safety net.
+  registerAgent();
+  process.on("exit", unregisterAgent);
   // If the MCP client disconnects (Claude Code exits or drops the server) the
   // browsers must not keep queueing asks nobody will answer — close every
   // session (which broadcasts session_closed) and exit.
@@ -78,6 +83,7 @@ async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   log(`Received ${signal}, shutting down`);
+  unregisterAgent();
   try {
     // Tell every open canvas the agent is gone and flush debounced saves
     // before the event loop dies.

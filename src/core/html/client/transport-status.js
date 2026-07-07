@@ -192,6 +192,19 @@ export const CLIENT_TRANSPORT_STATUS = `  // ===================================
     bannerEl.classList.remove("visible");
   });
 
+  // "Copy command to connect an agent": whenever no agent is answering this hole
+  // (opened standalone, or the agent dropped/timed out), offer a ready-to-paste
+  // instruction so the human can point their MCP agent at exactly this hole.
+  var bannerAction = document.getElementById("banner-action");
+  function connectCommand(){
+    return 'Resume my Rabbithole and answer my saved questions — call open_rabbithole with hole_id "' + (hydration.hole_id || "") + '".';
+  }
+  if (bannerAction){
+    bannerAction.addEventListener("click", function(){
+      copyText(connectCommand(), "Command copied — paste it to your agent");
+    });
+  }
+
   function hasPendingAsks(){
     for (var k in nodes) if (nodes[k].status === "pending") return true;
     return false;
@@ -199,6 +212,8 @@ export const CLIENT_TRANSPORT_STATUS = `  // ===================================
   function refreshStatus(){
     document.body.classList.toggle("agent-down", agentDown());
     document.body.classList.toggle("session-over", closed);
+    // The connect-an-agent action is relevant exactly when nothing is answering.
+    if (bannerAction) bannerAction.hidden = frozen || !agentDown();
     // Once the session is over the server is gone, so new asks can't be taken —
     // but every question already asked is saved and re-queued on reopen.
     var savedNote = hasPendingAsks() ? " Your unanswered questions are saved and will be answered there." : "";

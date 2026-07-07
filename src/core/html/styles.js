@@ -427,6 +427,9 @@ body.frozen.session-over .ll-frozen { display: inline; }
 #banner.visible { display: flex; }
 #banner.warn { border-left-color: var(--warn); }
 #banner .banner-title { font-weight: 600; color: var(--fg-bold); display: block; margin-bottom: 1px; }
+#banner .banner-action { display: inline-block; margin-top: 8px; background: var(--fg-bold); color: var(--bar-bg); border: none; border-radius: 7px; padding: 5px 10px; font: inherit; font-size: 12px; font-weight: 500; cursor: pointer; }
+#banner .banner-action:hover { opacity: 0.88; }
+#banner .banner-action[hidden] { display: none; }
 #banner-x { background: none; border: none; color: var(--fg-faint); cursor: pointer; font-size: 14px; line-height: 1; padding: 2px; flex-shrink: 0; }
 #banner-x:hover { color: var(--fg-bold); }
 

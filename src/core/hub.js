@@ -2,7 +2,9 @@ import http from "node:http";
 import { log, error as logError } from "./logger.js";
 import { escapeHtml } from "./utils.js";
 import { listHoles } from "./storage.js";
-import { openStandaloneSession } from "./rabbithole.js";
+import { openStandaloneSession, createStandaloneHole } from "./rabbithole.js";
+import { isAgentConnected } from "./presence.js";
+import { parseRequestBody } from "./transport/http.js";
 
 /**
  * The hub is the standing local server behind the `rabbithole` CLI: a long-lived
@@ -10,9 +12,13 @@ import { openStandaloneSession } from "./rabbithole.js";
  * spins up an ordinary (detached) session on its own port and 302-redirects the
  * browser to it, so the whole canvas machinery is reused unchanged. The hub
  * itself stays up across opens — closing a hole's tab never takes it down.
+ *
+ * Starting a NEW hole needs an agent (only an agent can answer into it), so
+ * POST /new is gated on a live MCP server being present (see presence.js).
  */
 
 const DEFAULT_HUB_PORT = 4173;
+const RECENT_LIMIT = 3;
 
 export async function startHub({ port } = {}) {
   const server = http.createServer(handleHubRequest);
@@ -55,12 +61,18 @@ async function handleHubRequest(req, res) {
   if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
     return renderHome(res);
   }
+  if (req.method === "GET" && url.pathname === "/all") {
+    return renderAll(res);
+  }
   if (req.method === "GET" && url.pathname === "/open") {
     return openHole(res, url.searchParams.get("id"));
   }
+  if (req.method === "POST" && url.pathname === "/new") {
+    return startHole(req, res);
+  }
   if (req.method === "GET" && url.pathname === "/health") {
     res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    res.end(JSON.stringify({ ok: true }));
+    res.end(JSON.stringify({ ok: true, agent_connected: isAgentConnected() }));
     return;
   }
 
@@ -68,18 +80,16 @@ async function handleHubRequest(req, res) {
   res.end("Not Found");
 }
 
+// ---- routes ----------------------------------------------------------------
+
 async function renderHome(res) {
-  let holes = [];
-  try {
-    holes = await listHoles();
-  } catch (err) {
-    logError(`Hub failed to list holes: ${err.message}`);
-  }
-  res.writeHead(200, {
-    "Content-Type": "text/html; charset=utf-8",
-    "Cache-Control": "no-store, no-cache, must-revalidate",
-  });
-  res.end(buildHomeHtml(holes));
+  const holes = await safeListHoles();
+  html(res, 200, buildHomeHtml(holes.slice(0, RECENT_LIMIT), holes.length));
+}
+
+async function renderAll(res) {
+  const holes = await safeListHoles();
+  html(res, 200, buildAllHtml(holes));
 }
 
 async function openHole(res, id) {
@@ -95,32 +105,126 @@ async function openHole(res, id) {
     res.end();
   } catch (err) {
     logError(`Hub failed to open hole ${holeId}: ${err.message}`);
-    res.writeHead(404, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
-    res.end(buildMessageHtml("Couldn't open that hole", err.message));
+    html(res, 404, buildMessageHtml("Couldn't open that hole", err.message));
   }
 }
 
-// ---- home page (self-contained) -------------------------------------------
+// Start a new hole — only if an agent is actually around to answer into it.
+async function startHole(req, res) {
+  let payload;
+  try {
+    payload = await parseRequestBody(req, res);
+  } catch (err) {
+    if (err?.statusCode === 413) return; // parseRequestBody already replied
+    json(res, 400, { ok: false, reason: "bad_request", error: err?.message || String(err) });
+    return;
+  }
 
-function buildHomeHtml(holes) {
-  const cards = holes.length
-    ? holes.map(holeCardHtml).join("\n")
-    : `<p class="empty">No saved holes yet. Start one from your agent with <code>open_rabbithole</code>, then it'll show up here.</p>`;
+  const content = String(payload?.content ?? "").trim();
+  if (!content) {
+    json(res, 400, { ok: false, reason: "empty" });
+    return;
+  }
+  if (!isAgentConnected()) {
+    json(res, 200, { ok: false, reason: "no_agent" });
+    return;
+  }
+  try {
+    const session = await createStandaloneHole({ title: deriveTitle(content), content });
+    json(res, 200, { ok: true, url: session.url });
+  } catch (err) {
+    logError(`Hub failed to start a new hole: ${err.message}`);
+    json(res, 500, { ok: false, reason: "error", error: err.message });
+  }
+}
+
+async function safeListHoles() {
+  try {
+    return await listHoles();
+  } catch (err) {
+    logError(`Hub failed to list holes: ${err.message}`);
+    return [];
+  }
+}
+
+// First non-empty line, stripped of a leading markdown heading marker, as the
+// hole's title; the whole text becomes the root document.
+function deriveTitle(content) {
+  const firstLine = String(content).split(/\r?\n/).find((l) => l.trim()) || "Untitled";
+  const cleaned = firstLine.replace(/^#{1,6}\s*/, "").trim();
+  return cleaned.length > 60 ? cleaned.slice(0, 60).trimEnd() + "…" : cleaned || "Untitled";
+}
+
+// ---- pages (self-contained) ------------------------------------------------
+
+function buildHomeHtml(recent, total) {
+  const grid = recent.length
+    ? `<div class="grid">${recent.map(holeCardHtml).join("")}</div>`
+    : `<p class="empty">No holes yet — start one above, or ask your agent to open a document.</p>`;
+  const viewAll = total > recent.length
+    ? `<a class="viewall" href="/all">View all ${total} →</a>`
+    : "";
 
   return page(
     "Rabbithole",
-    `<header>
-      <h1>Rabbithole</h1>
-      <p class="sub">Your saved holes${holes.length ? ` — ${holes.length}` : ""}. Open one to keep reading; ask anything and your questions are saved and answered the next time an agent picks it up.</p>
-    </header>
-    <main class="grid">${cards}</main>`
+    `<div class="hero">
+      <h1 class="agenda">What do you want to explore?</h1>
+      ${composerHtml()}
+      <section class="recent">
+        <div class="recent-head"><span>Recent holes</span>${viewAll}</div>
+        ${grid}
+      </section>
+    </div>`,
+    HOME_SCRIPT
   );
+}
+
+function buildAllHtml(holes) {
+  const grid = holes.length
+    ? `<div class="grid">${holes.map(holeCardHtml).join("")}</div>`
+    : `<p class="empty">No saved holes yet.</p>`;
+  return page(
+    "All holes · Rabbithole",
+    `<header class="all-head">
+      <a class="back" href="/">← New</a>
+      <h1>All holes${holes.length ? ` · ${holes.length}` : ""}</h1>
+    </header>
+    ${grid}`
+  );
+}
+
+function composerHtml() {
+  return `<form class="composer" id="composer" autocomplete="off">
+    <textarea id="prompt" rows="1" placeholder="Start a new rabbit hole — paste a document or a topic…"></textarea>
+    <div class="composer-row">
+      <div class="composer-left">
+        <span class="cbtn" aria-hidden="true">+</span>
+        <span class="cpill" aria-hidden="true">${slidersSvg()} Tools</span>
+      </div>
+      <div class="composer-right">
+        <span class="cbtn" aria-hidden="true">${micSvg()}</span>
+        <button type="submit" class="send" id="send" aria-label="Start">${sendSvg()}</button>
+      </div>
+    </div>
+    <div class="notice" id="notice" hidden>
+      <div class="notice-body">
+        <strong>Connect an agent first.</strong>
+        No MCP agent is running, so there's nothing to answer a new hole yet.
+        Start Claude Code or Codex with Rabbithole connected, then try again.
+      </div>
+      <div class="notice-cmd">
+        <code id="setup-cmd">claude mcp add rabbithole -- npx -y github:shlokkhemani/rabbithole</code>
+        <button type="button" class="copy" id="copy-setup">Copy</button>
+      </div>
+      <button type="button" class="retry" id="retry">I've connected one — retry</button>
+    </div>
+  </form>`;
 }
 
 function holeCardHtml(hole) {
   const title = escapeHtml(hole.title || "Untitled");
   const count = Number(hole.node_count) || 0;
-  const meta = `${count} ${count === 1 ? "node" : "nodes"} · updated ${escapeHtml(relativeTime(hole.updated_at))}`;
+  const meta = `${count} ${count === 1 ? "node" : "nodes"} · ${escapeHtml(relativeTime(hole.updated_at))}`;
   return `<a class="card" href="/open?id=${encodeURIComponent(hole.hole_id)}">
     <span class="card-title">${title}</span>
     <span class="card-meta">${meta}</span>
@@ -130,14 +234,11 @@ function holeCardHtml(hole) {
 function buildMessageHtml(title, detail) {
   return page(
     escapeHtml(title),
-    `<header><h1>${escapeHtml(title)}</h1><p class="sub">${escapeHtml(detail || "")}</p>
-     <p><a class="back" href="/">← Back to your holes</a></p></header>`
+    `<header class="all-head"><a class="back" href="/">← Back</a><h1>${escapeHtml(title)}</h1></header>
+     <p class="empty">${escapeHtml(detail || "")}</p>`
   );
 }
 
-// Relative time without Date.now() so this file has no ambient clock quirks in
-// tests; the timestamp math is against a plain `new Date()` here (hub runtime,
-// not a workflow script) which is fine.
 function relativeTime(iso) {
   const then = Date.parse(iso);
   if (!Number.isFinite(then)) return "recently";
@@ -152,40 +253,162 @@ function relativeTime(iso) {
   return new Date(then).toLocaleDateString();
 }
 
-function page(title, body) {
+// ---- inline icons ----------------------------------------------------------
+
+function slidersSvg() {
+  return `<svg width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 5h7M12 5h2M2 11h2M7 11h7"/><circle cx="10.5" cy="5" r="1.6"/><circle cx="5.5" cy="11" r="1.6"/></svg>`;
+}
+function micSvg() {
+  return `<svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="4" height="7" rx="2"/><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2"/></svg>`;
+}
+function sendSvg() {
+  return `<svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M8 12.5V4M8 4 4.2 7.8M8 4l3.8 3.8" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+
+// ---- page shell + client script --------------------------------------------
+
+const HOME_SCRIPT = `
+  var form = document.getElementById("composer");
+  var prompt = document.getElementById("prompt");
+  var notice = document.getElementById("notice");
+  var send = document.getElementById("send");
+
+  function grow(){ prompt.style.height = "auto"; prompt.style.height = Math.min(prompt.scrollHeight, 320) + "px"; }
+  prompt.addEventListener("input", grow);
+  prompt.addEventListener("keydown", function(e){
+    if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); form.requestSubmit(); }
+  });
+
+  function copy(text){
+    if (navigator.clipboard && navigator.clipboard.writeText) return navigator.clipboard.writeText(text);
+    var ta = document.createElement("textarea"); ta.value = text; ta.style.position="fixed"; ta.style.opacity="0";
+    document.body.appendChild(ta); ta.select(); try{ document.execCommand("copy"); }catch(e){} document.body.removeChild(ta);
+    return Promise.resolve();
+  }
+  document.getElementById("copy-setup").addEventListener("click", function(){
+    var self = this;
+    copy(document.getElementById("setup-cmd").textContent).then(function(){
+      self.textContent = "Copied"; setTimeout(function(){ self.textContent = "Copy"; }, 1400);
+    });
+  });
+  document.getElementById("retry").addEventListener("click", function(){ submit(); });
+
+  function submit(){
+    var content = prompt.value.trim();
+    if (!content) return;
+    send.disabled = true;
+    fetch("/new", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ content: content }) })
+      .then(function(r){ return r.json(); })
+      .then(function(res){
+        if (res && res.ok && res.url){ window.location.href = res.url; return; }
+        send.disabled = false;
+        if (res && res.reason === "no_agent"){ notice.hidden = false; }
+        else if (res && res.reason === "empty"){ /* no-op */ }
+        else { notice.hidden = false; }
+      })
+      .catch(function(){ send.disabled = false; notice.hidden = false; });
+  }
+  form.addEventListener("submit", function(e){ e.preventDefault(); submit(); });
+  prompt.focus();
+`;
+
+function page(title, body, script) {
+  const scriptTag = script
+    ? `<script>(function(){${script}})();</script>`
+    : "";
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
-<style>
-  :root { color-scheme: light dark; --bg:#faf9f7; --fg:#1b1a17; --muted:#6b6862; --card:#ffffff; --border:#e7e3db; --accent:#b4571f; --shadow:rgba(30,25,15,.06); }
-  @media (prefers-color-scheme: dark){ :root{ --bg:#171512; --fg:#efe9df; --muted:#9c968b; --card:#211e1a; --border:#332f28; --accent:#e0864a; --shadow:rgba(0,0,0,.35); } }
-  * { box-sizing: border-box; }
-  body { margin:0; padding:48px 24px 80px; background:var(--bg); color:var(--fg);
-    font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
-  .wrap { max-width:760px; margin:0 auto; }
-  header { margin-bottom:32px; }
-  h1 { font-size:28px; margin:0 0 6px; letter-spacing:-.02em; }
-  .sub { color:var(--muted); margin:0; max-width:56ch; }
-  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(220px,1fr)); gap:14px; }
-  .card { display:flex; flex-direction:column; gap:8px; padding:16px 18px; border-radius:12px;
-    background:var(--card); border:1px solid var(--border); box-shadow:0 1px 2px var(--shadow);
-    text-decoration:none; color:inherit; transition:transform .12s ease, border-color .12s ease, box-shadow .12s ease; }
-  .card:hover { transform:translateY(-2px); border-color:var(--accent); box-shadow:0 6px 18px var(--shadow); }
-  .card-title { font-weight:600; font-size:17px; letter-spacing:-.01em; }
-  .card-meta { color:var(--muted); font-size:13px; }
-  .empty { color:var(--muted); }
-  code { background:var(--card); border:1px solid var(--border); border-radius:5px; padding:1px 5px; font-size:.9em; }
-  .back { color:var(--accent); text-decoration:none; }
-  .back:hover { text-decoration:underline; }
-</style>
+<style>${PAGE_CSS}</style>
 </head>
 <body>
 <div class="wrap">
 ${body}
 </div>
+${scriptTag}
 </body>
 </html>`;
+}
+
+const PAGE_CSS = `
+  :root { color-scheme: light dark;
+    --bg:#ffffff; --fg:#0d0d0d; --muted:#8f8f8f; --card:#ffffff; --card-hover:#f7f7f5;
+    --border:#e5e5e2; --field:#ffffff; --field-border:#d8d8d4; --accent:#0d0d0d; --shadow:rgba(13,13,13,.06); }
+  @media (prefers-color-scheme: dark){ :root{
+    --bg:#212121; --fg:#ececec; --muted:#9a9a9a; --card:#2a2a2a; --card-hover:#323232;
+    --border:#3a3a3a; --field:#303030; --field-border:#4a4a4a; --accent:#ececec; --shadow:rgba(0,0,0,.35); } }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body { margin:0; background:var(--bg); color:var(--fg);
+    font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; }
+  .wrap { min-height:100%; max-width:760px; margin:0 auto; padding:0 20px 64px; }
+
+  /* home hero (ChatGPT-style) */
+  .hero { min-height:100vh; display:flex; flex-direction:column; justify-content:center; gap:22px; padding:64px 0; }
+  .agenda { text-align:center; font-size:30px; font-weight:600; letter-spacing:-.02em; margin:0 0 4px; }
+
+  .composer { background:var(--field); border:1px solid var(--field-border); border-radius:26px;
+    padding:14px 16px 10px; box-shadow:0 2px 10px var(--shadow); }
+  .composer textarea { display:block; width:100%; border:0; outline:0; resize:none; background:transparent;
+    color:var(--fg); font:inherit; line-height:1.5; max-height:320px; padding:2px 4px 8px; }
+  .composer textarea::placeholder { color:var(--muted); }
+  .composer-row { display:flex; align-items:center; justify-content:space-between; }
+  .composer-left, .composer-right { display:flex; align-items:center; gap:8px; }
+  .cbtn { display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; border-radius:50%;
+    color:var(--fg); font-size:20px; line-height:1; }
+  .cpill { display:inline-flex; align-items:center; gap:6px; height:32px; padding:0 12px; border-radius:16px;
+    border:1px solid var(--field-border); color:var(--fg); font-size:14px; }
+  .send { display:inline-flex; align-items:center; justify-content:center; width:34px; height:34px; border:0;
+    border-radius:50%; background:var(--accent); color:var(--bg); cursor:pointer; }
+  .send:disabled { opacity:.4; cursor:default; }
+
+  .notice { margin-top:12px; border-top:1px solid var(--border); padding-top:12px; font-size:13.5px; color:var(--fg); }
+  .notice-body { color:var(--muted); }
+  .notice-body strong { color:var(--fg); }
+  .notice-cmd { display:flex; align-items:center; gap:8px; margin:10px 0; }
+  .notice-cmd code { flex:1; overflow-x:auto; white-space:nowrap; background:var(--bg); border:1px solid var(--border);
+    border-radius:8px; padding:8px 10px; font-size:12.5px; }
+  .notice .copy, .notice .retry { border:1px solid var(--field-border); background:var(--card); color:var(--fg);
+    border-radius:8px; padding:7px 12px; font-size:13px; cursor:pointer; }
+  .notice .retry { margin-top:2px; }
+  .notice .copy:hover, .notice .retry:hover { background:var(--card-hover); }
+
+  /* recent + grid */
+  .recent { margin-top:6px; }
+  .recent-head { display:flex; align-items:baseline; justify-content:space-between; margin:0 4px 12px;
+    font-size:13px; font-weight:600; color:var(--muted); letter-spacing:.02em; text-transform:uppercase; }
+  .viewall { color:var(--fg); text-decoration:none; font-weight:500; text-transform:none; letter-spacing:0; }
+  .viewall:hover { text-decoration:underline; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:12px; }
+  .card { display:flex; flex-direction:column; gap:8px; padding:15px 16px; border-radius:14px;
+    background:var(--card); border:1px solid var(--border); text-decoration:none; color:inherit;
+    transition:background .12s ease, border-color .12s ease, transform .12s ease; }
+  .card:hover { background:var(--card-hover); border-color:var(--field-border); transform:translateY(-1px); }
+  .card-title { font-weight:600; font-size:15.5px; letter-spacing:-.01em; }
+  .card-meta { color:var(--muted); font-size:12.5px; }
+  .empty { color:var(--muted); margin:4px; }
+
+  /* all-holes page */
+  .all-head { display:flex; align-items:center; gap:14px; padding:36px 4px 24px; }
+  .all-head h1 { font-size:22px; margin:0; letter-spacing:-.01em; }
+  .back { color:var(--muted); text-decoration:none; font-size:14px; }
+  .back:hover { color:var(--fg); }
+`;
+
+// ---- tiny response helpers -------------------------------------------------
+
+function html(res, status, body) {
+  res.writeHead(status, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store, no-cache, must-revalidate",
+  });
+  res.end(body);
+}
+
+function json(res, status, obj) {
+  res.writeHead(status, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+  res.end(JSON.stringify(obj));
 }
