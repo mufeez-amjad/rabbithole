@@ -111,45 +111,6 @@ export async function openStandaloneSession(holeId) {
   });
 }
 
-/**
- * Start a BRAND NEW hole from the standalone hub (no agent behind it). Creates
- * the root document, opens a detached session, and returns it. The hub only
- * calls this once it has confirmed an agent is connected, so the human can hand
- * the fresh hole to that agent (via the connect command) to answer into.
- */
-export async function createStandaloneHole({ title, content }) {
-  const markdown = String(content ?? "");
-  const rootId = randomUUID();
-  const name = (title || "").trim() || "Untitled";
-  const rootNode = {
-    id: rootId,
-    parent_id: null,
-    title: name,
-    markdown,
-    contentHtml: await renderMarkdownToHtml(markdown),
-    origin: null,
-    position: { x: 0, y: 0 },
-    size: null,
-    font_scale: 1,
-    collapsed: false,
-    status: "answered",
-    read: true,
-    created_at: new Date().toISOString(),
-  };
-
-  return createSession({
-    holeId: randomUUID(),
-    title: name,
-    rootId,
-    nodes: [rootNode],
-    isResume: false,
-    attached: false,
-    autoOpen: false,
-    standalone: true,
-    renderPage: (hydration) => buildCanvasHtml(hydration),
-  });
-}
-
 // Guard against schema drift / partial files: a hole with no root_id or no root
 // node would open a session the browser can't render. Fail fast with an
 // actionable error instead of blocking on an unrenderable page.

@@ -110,9 +110,11 @@ hole to keep reading. There's no agent behind it, so answers don't stream in
 live, but you can still ask: each question is saved and answered the next time
 you open that hole with an agent — the reading page has a **Copy command to
 connect an agent** button that hands your MCP client the exact `open_rabbithole
-{ hole_id }` instruction. Starting a *new* hole from the prompt requires a
-running agent (the launcher detects your MCP server via a presence marker). The
-server stays up until you stop it with Ctrl+C.
+{ hole_id }` instruction for that hole. Starting a *new* hole from the prompt
+respects the 1:1 agent↔hole model: it stashes what you typed as a draft and
+gives you a **paste-into-a-fresh-agent** command (`open_rabbithole { title,
+file_path }`) that opens a brand-new hole live in its own tab. The server stays
+up until you stop it with Ctrl+C.
 
 ## What's inside
 

@@ -1,8 +1,8 @@
 import http from "node:http";
 import { log, error as logError } from "./logger.js";
 import { escapeHtml } from "./utils.js";
-import { listHoles } from "./storage.js";
-import { openStandaloneSession, createStandaloneHole } from "./rabbithole.js";
+import { listHoles, saveDraft } from "./storage.js";
+import { openStandaloneSession } from "./rabbithole.js";
 import { isAgentConnected } from "./presence.js";
 import { parseRequestBody } from "./transport/http.js";
 
@@ -13,8 +13,14 @@ import { parseRequestBody } from "./transport/http.js";
  * browser to it, so the whole canvas machinery is reused unchanged. The hub
  * itself stays up across opens — closing a hole's tab never takes it down.
  *
- * Starting a NEW hole needs an agent (only an agent can answer into it), so
- * POST /new is gated on a live MCP server being present (see presence.js).
+ * The agent↔hole binding is 1:1: an attached agent blocks in the
+ * open_rabbithole → answer_branch loop on exactly one hole. So starting a NEW
+ * hole isn't "attach an agent to a hub page" — it's a FRESH agent opening a new
+ * rabbithole. POST /new therefore doesn't create anything; it stashes the typed
+ * content as a draft and hands back an `open_rabbithole { file_path }` command
+ * to paste into a fresh agent, which creates + opens the hole live (its own tab).
+ * The presence marker (see presence.js) is only an advisory "is any agent even
+ * running?" hint, since a running agent may already be busy with another hole.
  */
 
 const DEFAULT_HUB_PORT = 4173;
@@ -109,7 +115,8 @@ async function openHole(res, id) {
   }
 }
 
-// Start a new hole — only if an agent is actually around to answer into it.
+// Start a new hole: stash the content and hand back a command for a FRESH agent
+// to open it (1:1). The hub creates no hole and no session of its own here.
 async function startHole(req, res) {
   let payload;
   try {
@@ -125,17 +132,28 @@ async function startHole(req, res) {
     json(res, 400, { ok: false, reason: "empty" });
     return;
   }
-  if (!isAgentConnected()) {
-    json(res, 200, { ok: false, reason: "no_agent" });
-    return;
-  }
   try {
-    const session = await createStandaloneHole({ title: deriveTitle(content), content });
-    json(res, 200, { ok: true, url: session.url });
+    const title = deriveTitle(content);
+    const filePath = await saveDraft(content);
+    json(res, 200, {
+      ok: true,
+      title,
+      file_path: filePath,
+      command: newHoleCommand(title, filePath),
+      // Advisory only — a fresh agent connection is what actually opens the hole.
+      agent_connected: isAgentConnected(),
+    });
   } catch (err) {
-    logError(`Hub failed to start a new hole: ${err.message}`);
+    logError(`Hub failed to prepare a new hole: ${err.message}`);
     json(res, 500, { ok: false, reason: "error", error: err.message });
   }
+}
+
+function newHoleCommand(title, filePath) {
+  return (
+    `Open a new Rabbithole titled "${title}" from the file ${filePath} — ` +
+    `call open_rabbithole with that title and file_path, then answer my questions as I explore.`
+  );
 }
 
 async function safeListHoles() {
@@ -206,17 +224,20 @@ function composerHtml() {
         <button type="submit" class="send" id="send" aria-label="Start">${sendSvg()}</button>
       </div>
     </div>
-    <div class="notice" id="notice" hidden>
-      <div class="notice-body">
-        <strong>Connect an agent first.</strong>
-        No MCP agent is running, so there's nothing to answer a new hole yet.
-        Start Claude Code or Codex with Rabbithole connected, then try again.
-      </div>
+    <div class="handoff" id="handoff" hidden>
+      <div class="handoff-title">Start this in a fresh agent</div>
+      <div class="handoff-sub">Paste into a new Claude Code / Codex conversation — it opens a brand-new hole and attaches to it live.</div>
       <div class="notice-cmd">
-        <code id="setup-cmd">claude mcp add rabbithole -- npx -y github:shlokkhemani/rabbithole</code>
-        <button type="button" class="copy" id="copy-setup">Copy</button>
+        <code id="handoff-cmd"></code>
+        <button type="button" class="copy" id="copy-cmd">Copy</button>
       </div>
-      <button type="button" class="retry" id="retry">I've connected one — retry</button>
+      <div class="noagent" id="noagent" hidden>
+        No agent detected yet. If you don't have one running, connect Rabbithole to your MCP client first:
+        <div class="notice-cmd">
+          <code id="setup-cmd">claude mcp add rabbithole -- npx -y github:shlokkhemani/rabbithole</code>
+          <button type="button" class="copy" id="copy-setup">Copy</button>
+        </div>
+      </div>
     </div>
   </form>`;
 }
@@ -270,11 +291,13 @@ function sendSvg() {
 const HOME_SCRIPT = `
   var form = document.getElementById("composer");
   var prompt = document.getElementById("prompt");
-  var notice = document.getElementById("notice");
   var send = document.getElementById("send");
+  var handoff = document.getElementById("handoff");
+  var handoffCmd = document.getElementById("handoff-cmd");
+  var noagent = document.getElementById("noagent");
 
   function grow(){ prompt.style.height = "auto"; prompt.style.height = Math.min(prompt.scrollHeight, 320) + "px"; }
-  prompt.addEventListener("input", grow);
+  prompt.addEventListener("input", function(){ grow(); handoff.hidden = true; });
   prompt.addEventListener("keydown", function(e){
     if (e.key === "Enter" && !e.shiftKey){ e.preventDefault(); form.requestSubmit(); }
   });
@@ -285,13 +308,16 @@ const HOME_SCRIPT = `
     document.body.appendChild(ta); ta.select(); try{ document.execCommand("copy"); }catch(e){} document.body.removeChild(ta);
     return Promise.resolve();
   }
-  document.getElementById("copy-setup").addEventListener("click", function(){
-    var self = this;
-    copy(document.getElementById("setup-cmd").textContent).then(function(){
-      self.textContent = "Copied"; setTimeout(function(){ self.textContent = "Copy"; }, 1400);
+  function wireCopy(btnId, srcId){
+    document.getElementById(btnId).addEventListener("click", function(){
+      var self = this;
+      copy(document.getElementById(srcId).textContent).then(function(){
+        self.textContent = "Copied"; setTimeout(function(){ self.textContent = "Copy"; }, 1400);
+      });
     });
-  });
-  document.getElementById("retry").addEventListener("click", function(){ submit(); });
+  }
+  wireCopy("copy-cmd", "handoff-cmd");
+  wireCopy("copy-setup", "setup-cmd");
 
   function submit(){
     var content = prompt.value.trim();
@@ -300,13 +326,14 @@ const HOME_SCRIPT = `
     fetch("/new", { method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({ content: content }) })
       .then(function(r){ return r.json(); })
       .then(function(res){
-        if (res && res.ok && res.url){ window.location.href = res.url; return; }
         send.disabled = false;
-        if (res && res.reason === "no_agent"){ notice.hidden = false; }
-        else if (res && res.reason === "empty"){ /* no-op */ }
-        else { notice.hidden = false; }
+        if (res && res.ok && res.command){
+          handoffCmd.textContent = res.command;
+          noagent.hidden = !!res.agent_connected;
+          handoff.hidden = false;
+        }
       })
-      .catch(function(){ send.disabled = false; notice.hidden = false; });
+      .catch(function(){ send.disabled = false; });
   }
   form.addEventListener("submit", function(e){ e.preventDefault(); submit(); });
   prompt.focus();
@@ -365,16 +392,16 @@ const PAGE_CSS = `
     border-radius:50%; background:var(--accent); color:var(--bg); cursor:pointer; }
   .send:disabled { opacity:.4; cursor:default; }
 
-  .notice { margin-top:12px; border-top:1px solid var(--border); padding-top:12px; font-size:13.5px; color:var(--fg); }
-  .notice-body { color:var(--muted); }
-  .notice-body strong { color:var(--fg); }
+  .handoff { margin-top:12px; border-top:1px solid var(--border); padding-top:12px; font-size:13.5px; color:var(--fg); }
+  .handoff-title { font-weight:600; }
+  .handoff-sub { color:var(--muted); margin-top:2px; }
   .notice-cmd { display:flex; align-items:center; gap:8px; margin:10px 0; }
   .notice-cmd code { flex:1; overflow-x:auto; white-space:nowrap; background:var(--bg); border:1px solid var(--border);
     border-radius:8px; padding:8px 10px; font-size:12.5px; }
-  .notice .copy, .notice .retry { border:1px solid var(--field-border); background:var(--card); color:var(--fg);
-    border-radius:8px; padding:7px 12px; font-size:13px; cursor:pointer; }
-  .notice .retry { margin-top:2px; }
-  .notice .copy:hover, .notice .retry:hover { background:var(--card-hover); }
+  .handoff .copy { border:1px solid var(--field-border); background:var(--card); color:var(--fg);
+    border-radius:8px; padding:7px 12px; font-size:13px; cursor:pointer; flex-shrink:0; }
+  .handoff .copy:hover { background:var(--card-hover); }
+  .noagent { margin-top:10px; padding-top:10px; border-top:1px dashed var(--border); color:var(--muted); font-size:12.5px; }
 
   /* recent + grid */
   .recent { margin-top:6px; }

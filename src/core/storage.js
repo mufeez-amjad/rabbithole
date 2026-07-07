@@ -83,6 +83,19 @@ export async function saveHole(hole) {
   return persisted;
 }
 
+/**
+ * Stash typed/pasted content as a draft markdown file so the standalone hub can
+ * hand a fresh agent a clean `open_rabbithole { file_path }` command instead of
+ * inlining a whole document into a copy-paste string. Returns the absolute path.
+ */
+export async function saveDraft(content) {
+  const dir = path.join(holesDir(), "drafts");
+  await fs.mkdir(dir, { recursive: true });
+  const file = path.join(dir, `${randomUUID()}.md`);
+  await fs.writeFile(file, String(content ?? ""), "utf-8");
+  return file;
+}
+
 export async function loadHole(holeId) {
   const raw = await fs.readFile(holePath(holeId), "utf-8");
   return JSON.parse(raw);
